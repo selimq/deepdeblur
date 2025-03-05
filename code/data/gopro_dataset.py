@@ -83,11 +83,16 @@ class GoproDataset(data.Dataset):
         self.root_dir = root_dir
         self.blur_type = blur_type
         self.crop_size = crop_size
-        self.phase = phase 
+        self.phase = phase
+        sub_dir = phase
 
-        self.normalize = get_normalize()
+        assert self.phase in ['train', 'test', 'wiener']
 
-        assert self.phase in ['train', 'test']
+        if self.phase == 'wiener':
+            sub_dir = "test"
+            self.normalize = None
+        else:
+            self.normalize = get_normalize()
 
         if self.blur_type == 'lin':
             blur_dir = 'blur'
@@ -95,19 +100,22 @@ class GoproDataset(data.Dataset):
             blur_dir = 'blur_gamma'
         else:
             raise ValueError('incorrect blur type given..')
-        
-        self.blur_list = glob.glob(os.path.join(root_dir, phase) + '/*/' + blur_dir + '/*.*')
-        self.sharp_list = glob.glob(os.path.join(root_dir, phase) + '/*/sharp/*.*')
+
+
+        self.blur_list = glob.glob(os.path.join(root_dir, sub_dir) + '/*/' + blur_dir + '/*.*')
+        self.sharp_list = glob.glob(os.path.join(root_dir, sub_dir) + '/*/sharp/*.*')
         assert len(self.blur_list) == len(self.sharp_list)
 
         print('{} dataset contains total {:d} pair of images'.format(phase, len(self.blur_list)))
+        # Define transformation to convert images to tensor
+        self.to_tensor = transforms.ToTensor()
 
     def __getitem__(self, idx):
         blur1 = Image.open(self.blur_list[idx]).convert('RGB')
         sharp1 = Image.open(self.sharp_list[idx]).convert('RGB')
 
         if self.phase == 'train':
-            blur1, sharp1 = augment(blur1, sharp1, self.crop_size) 
+            blur1, sharp1 = augment(blur1, sharp1, self.crop_size)
 
         h, w = blur1.size
 
@@ -117,15 +125,34 @@ class GoproDataset(data.Dataset):
         blur3 = blur2.resize((h//4, w//4), Image.BICUBIC)
         sharp3 = sharp2.resize((h//4, w//4), Image.BICUBIC)
 
-        blur1 = self.normalize(blur1)
-        sharp1 = self.normalize(sharp1)
+        if self.normalize:
+            blur1 = self.normalize(blur1)
+            sharp1 = self.normalize(sharp1)
 
-        blur2 = self.normalize(blur2)
-        sharp2 = self.normalize(sharp2)
+            blur2 = self.normalize(blur2)
+            sharp2 = self.normalize(sharp2)
 
-        blur3 = self.normalize(blur3)
-        sharp3 = self.normalize(sharp3)
-        
+            blur3 = self.normalize(blur3)
+            sharp3 = self.normalize(sharp3)
+
+
+        # Convert images to tensor only if they are PIL Images
+        if isinstance(blur1, Image.Image):
+            blur1 = self.to_tensor(blur1)
+        if isinstance(sharp1, Image.Image):
+            sharp1 = self.to_tensor(sharp1)
+
+        if isinstance(blur2, Image.Image):
+            blur2 = self.to_tensor(blur2)
+        if isinstance(sharp2, Image.Image):
+            sharp2 = self.to_tensor(sharp2)
+
+        if isinstance(blur3, Image.Image):
+            blur3 = self.to_tensor(blur3)
+        if isinstance(sharp3, Image.Image):
+            sharp3 = self.to_tensor(sharp3)
+
+
         return (blur1, blur2, blur3), (sharp1, sharp2, sharp3)
 
     def __len__(self):
