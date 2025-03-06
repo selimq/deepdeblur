@@ -33,6 +33,7 @@ parser.add_argument('--save_dir', type=str, default=None,
 
 parser.add_argument('--only_ai', default=False, action=argparse.BooleanOptionalAction)
 
+parser.add_argument('--only_wiener', default=False, action=argparse.BooleanOptionalAction)
 
 def main():
 
@@ -68,15 +69,16 @@ def main():
     model_dict.update(pretrained_dict)
     model.load_state_dict(model_dict)
 
+    if args.only_wiener is False:
+        test_loader = create_dataloader(args, phase='test')
+        test_wiener(test_loader, args)
 
-    test(test_loader, model, device, args)
     if args.only_ai is False:
         test_loader = create_dataloader(args, phase='wiener')
         test_wiener(test_loader, args)
 
 
-k = 4
-psf = np.ones((k,k)) / (k*k)
+
 
 def test(test_loader, model, device, args):
     test_psnr_ai = AverageMeter('PSNR (AI)')
@@ -120,22 +122,32 @@ def test(test_loader, model, device, args):
 
     print(f'>> Avg PSNR (AI): {test_psnr_ai.avg:.2f}, Avg SSIM (AI): {test_ssim_ai.avg:.4f}')
 
+k = 4
+psf = np.ones((k,k)) / (k*k)
+
 def deblur_wiener(img_blur):
 
     # Apply Wiener filter to each color channel
-    imgRestor_r = restoration.wiener(img_blur[:, :, 0], psf, balance=0.50)
-    imgRestor_g = restoration.wiener(img_blur[:, :, 1], psf, balance=0.50)
-    imgRestor_b = restoration.wiener(img_blur[:, :, 2], psf, balance=0.50)
+    imgRestor_r = restoration.wiener(img_blur[:, :, 0], psf, balance=0.3)
+    imgRestor_g = restoration.wiener(img_blur[:, :, 1], psf, balance=0.3)
+    imgRestor_b = restoration.wiener(img_blur[:, :, 2], psf, balance=0.3)
 
     imgRestor_rgb = np.stack((imgRestor_r, imgRestor_g, imgRestor_b), axis=-1)
 
-    imgRestor_rgb = np.clip(imgRestor_rgb, 0, 1)
-
-    # Convert the image to uint8 for display
-    # imgRestor_rgb = (imgRestor_rgb * 255).astype(np.uint8)
-
     return imgRestor_rgb
 
+
+def plot_images(blurred_image, deblurred_image):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    axes[0].imshow(blurred_image, cmap='gray' if blurred_image.ndim == 2 else None)
+    axes[0].set_title('Blurred Image')
+    axes[0].axis('off')
+    axes[1].imshow(deblurred_image, cmap='gray' if deblurred_image.ndim == 2 else None)
+    axes[1].set_title('Deblurred Image (Wiener)')
+    axes[1].axis('off')
+
+    plt.tight_layout()
+    plt.show()
 
 
 def test_wiener(test_loader, args):
@@ -150,15 +162,12 @@ def test_wiener(test_loader, args):
         sharp1 = sharp1.detach().clone().cpu().numpy().squeeze().transpose(1, 2, 0)
         blur1 = blur1.detach().clone().cpu().numpy().squeeze().transpose(1, 2, 0)
 
-        sharp1 = np.clip(sharp1 + 0.5, 0, 1)  # If the image was normalized to [-0.5, 0.5]
-        blur1 = np.clip(blur1 + 0.5, 0, 1)
-
         # Apply the Wiener deblur
         blur1_wiener = deblur_wiener(blur1)
 
         # Calculate PSNR and SSIM
         psnr_wiener = peak_signal_noise_ratio(sharp1, blur1_wiener, data_range=1)  # Convert to [0, 255]
-        ssim_wiener = structural_similarity(sharp1, blur1_wiener, gaussian_weights = True,win_size=11,  data_range=1)
+        ssim_wiener = structural_similarity(sharp1, blur1_wiener, win_size = 3,  data_range=1)
 
         # Update the average PSNR and SSIM
         test_psnr_wiener.update(psnr_wiener)
